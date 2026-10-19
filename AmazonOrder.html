@@ -1,0 +1,724 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PacketQuest: Stop-and-Wait ARQ Simulation</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700;800&display=swap');
+        
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Inter', sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            transition: background 0.3s ease;
+        }
+        
+        body.dark {
+            background: linear-gradient(135deg, #1a1a2e 0%, #0f0f1e 100%);
+        }
+
+        body.light {
+            background: linear-gradient(135deg, #e0c3fc 0%, #8ec5fc 100%);
+        }
+        
+        .glass {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.37);
+        }
+
+        body.light .glass {
+            background: rgba(255, 255, 255, 0.5);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.6);
+            box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.2);
+        }
+        
+        .neon-border {
+            box-shadow: 0 0 20px rgba(102, 126, 234, 0.5), 0 0 40px rgba(118, 75, 162, 0.3);
+        }
+
+        body.light .neon-border {
+            box-shadow: 0 0 20px rgba(102, 126, 234, 0.6), 0 0 40px rgba(118, 75, 162, 0.4), 0 0 60px rgba(142, 197, 252, 0.3);
+        }
+
+        body.light h1, body.light h2, body.light h3, body.light h4,
+        body.light p, body.light span, body.light div {
+            color: #1a1a2e !important;
+        }
+
+        body.light button {
+            color: white !important;
+        }
+
+        body.light .text-white {
+            color: #1a1a2e !important;
+        }
+        
+        .packet {
+            width: 80px;
+            height: 80px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 12px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            font-size: 32px;
+            position: absolute;
+            transition: all 0.5s ease;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+            left: 0;
+            top: 10px;
+        }
+        
+        .packet-id {
+            font-size: 11px;
+            color: white;
+            font-weight: 700;
+            margin-top: 2px;
+        }
+        
+        .ack-packet {
+            width: 60px;
+            height: 60px;
+            background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+            top: 20px;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.05); }
+        }
+        
+        .pulse-animation {
+            animation: pulse 2s infinite;
+        }
+        
+        @keyframes fadeOut {
+            from { opacity: 1; }
+            to { opacity: 0; transform: scale(0.5); }
+        }
+        
+        .fade-out {
+            animation: fadeOut 0.5s forwards;
+        }
+        
+        .timeout-bar {
+            width: 0%;
+            height: 8px;
+            background: linear-gradient(90deg, #f093fb 0%, #f5576c 100%);
+            border-radius: 4px;
+            transition: width linear;
+        }
+        
+        .log-entry {
+            animation: slideIn 0.3s ease;
+        }
+        
+        @keyframes slideIn {
+            from { transform: translateX(-20px); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+        
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            transition: all 0.3s ease;
+        }
+        
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 25px rgba(102, 126, 234, 0.4);
+        }
+        
+        .noise-zone {
+            background: repeating-linear-gradient(
+                45deg,
+                rgba(255, 255, 255, 0.05),
+                rgba(255, 255, 255, 0.05) 10px,
+                rgba(255, 255, 255, 0.1) 10px,
+                rgba(255, 255, 255, 0.1) 20px
+            );
+            animation: noise-scroll 20s linear infinite;
+            position: relative;
+        }
+        
+        @keyframes noise-scroll {
+            0% { background-position: 0 0; }
+            100% { background-position: 100px 100px; }
+        }
+        
+        .hidden {
+            display: none;
+        }
+
+        .animation-container {
+            position: relative;
+            width: 100%;
+            height: 100px;
+        }
+    </style>
+</head>
+<body>
+    <!-- Dark Mode Toggle -->
+    <div style="position: fixed; top: 16px; right: 16px; z-index: 50;">
+        <button id="darkModeToggle" class="glass text-white px-4 py-2 rounded-lg hover:bg-white/20 transition" style="font-weight: 600; border: none; cursor: pointer;">
+             Light Mode
+        </button>
+    </div>
+
+    <!-- Landing Page -->
+    <div id="landingPage" style="min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 16px;">
+        <div class="glass neon-border rounded-3xl p-12 max-w-4xl text-center">
+            <h1 style="font-size: 4rem; font-weight: bold; color: white; margin-bottom: 24px;" class="pulse-animation">
+                 PacketQuest
+            </h1>
+            <h2 style="font-size: 2rem; color: rgba(255,255,255,0.9); margin-bottom: 16px;">
+                Reliable Data Delivery
+            </h2>
+            <p style="font-size: 1.25rem; color: rgba(255,255,255,0.8); margin-bottom: 32px;">
+                Stop & Wait ARQ in Action (Amazon Order Example)
+            </p>
+            <p style="color: rgba(255,255,255,0.7); margin-bottom: 48px; max-width: 40rem; margin-left: auto; margin-right: auto;">
+                Experience how reliable communication works in noisy networks through an interactive Amazon order simulation. 
+                Learn Stop-and-Wait Automatic Repeat Request protocol with real-world analogies.
+            </p>
+            
+            <div style="display: flex; gap: 16px; justify-content: center; flex-wrap: wrap;">
+                <button id="theoryBtn" class="btn-primary text-white px-12 py-4 rounded-full text-xl font-semibold" style="border: none; cursor: pointer;">
+                     Learn Theory
+                </button>
+                <button id="startBtn" class="btn-primary text-white px-12 py-4 rounded-full text-xl font-semibold" style="border: none; cursor: pointer;">
+                     Start Simulation
+                </button>
+            </div>
+
+            <div style="margin-top: 32px; color: rgba(255,255,255,0.6); font-size: 0.875rem;">
+                <p> New to ARQ? Start with Theory • Ready to practice? Jump to Simulation</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Theory Page -->
+    <div id="theoryPage" class="hidden" style="min-height: 100vh; padding: 16px 16px 48px;">
+        <div style="max-width: 96rem; margin: 0 auto;">
+            <div class="glass rounded-3xl p-8 mb-8">
+                <button id="backToLanding" style="color: rgba(255,255,255,0.8); margin-bottom: 16px; cursor: pointer; background: none; border: none; font-size: 16px;">
+                    ← Back
+                </button>
+                <h2 style="font-size: 2.5rem; font-weight: bold; color: white; margin-bottom: 32px; text-align: center;">
+                     Understanding Stop-and-Wait ARQ
+                </h2>
+                
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 24px; margin-bottom: 32px;">
+                    <div class="glass rounded-2xl p-6">
+                        <div style="font-size: 3rem; margin-bottom: 16px; text-align: center;"></div>
+                        <h3 style="font-size: 1.5rem; font-weight: bold; color: white; margin-bottom: 12px; text-align: center;">Sender (Customer)</h3>
+                        <p style="color: rgba(255,255,255,0.8);">
+                            The customer places an order online. In networking terms, this is the sender transmitting a data packet. 
+                            Only one order is sent at a time, waiting for confirmation before proceeding.
+                        </p>
+                    </div>
+                    
+                    <div class="glass rounded-2xl p-6">
+                        <div style="font-size: 3rem; margin-bottom: 16px; text-align: center;"></div>
+                        <h3 style="font-size: 1.5rem; font-weight: bold; color: white; margin-bottom: 12px; text-align: center;">Receiver (Amazon Server)</h3>
+                        <p style="color: rgba(255,255,255,0.8);">
+                            Amazon's server receives the order and processes it. In networking, this is the receiver that 
+                            accepts data packets and sends back acknowledgments (ACKs).
+                        </p>
+                    </div>
+                    
+                    <div class="glass rounded-2xl p-6">
+                        <div style="font-size: 3rem; margin-bottom: 16px; text-align: center;"></div>
+                        <h3 style="font-size: 1.5rem; font-weight: bold; color: white; margin-bottom: 12px; text-align: center;">ACK (Order Confirmation)</h3>
+                        <p style="color: rgba(255,255,255,0.8);">
+                            The confirmation message sent back to customer. This acknowledgment tells the sender 
+                            that the packet was received successfully and it's safe to send the next one.
+                        </p>
+                    </div>
+                    
+                    <div class="glass rounded-2xl p-6">
+                        <div style="font-size: 3rem; margin-bottom: 16px; text-align: center;"></div>
+                        <h3 style="font-size: 1.5rem; font-weight: bold; color: white; margin-bottom: 12px; text-align: center;">Noisy Channel</h3>
+                        <p style="color: rgba(255,255,255,0.8);">
+                            Network interference that can cause packet loss. Like internet connectivity issues, 
+                            this represents real-world communication challenges requiring retransmission mechanisms.
+                        </p>
+                    </div>
+                </div>
+
+                <div class="glass rounded-2xl p-8 mb-6">
+                    <h3 style="font-size: 1.5rem; font-weight: bold; color: white; margin-bottom: 16px;">How Stop-and-Wait ARQ Works:</h3>
+                    <ol style="color: rgba(255,255,255,0.8); padding-left: 24px; line-height: 2;">
+                        <li><strong>Send:</strong> Sender transmits one frame (order request) and starts a timer</li>
+                        <li><strong>Wait:</strong> Sender waits for acknowledgment (order confirmation) from receiver</li>
+                        <li><strong>Receive ACK:</strong> If ACK arrives before timeout, send next frame</li>
+                        <li><strong>Timeout:</strong> If no ACK arrives in time, retransmit the same frame</li>
+                        <li><strong>Error Handling:</strong> Lost packets or ACKs trigger automatic retransmission</li>
+                    </ol>
+                </div>
+
+                <div class="glass rounded-2xl p-8 mb-6">
+                    <h3 style="font-size: 1.5rem; font-weight: bold; color: white; margin-bottom: 16px;"> Key Concepts:</h3>
+                    <div style="color: rgba(255,255,255,0.8); line-height: 1.8;">
+                        <p style="margin-bottom: 12px;"><strong> Timeout Period:</strong> The sender waits for a specific duration. If no ACK is received within this time, it assumes the packet or ACK was lost and retransmits.</p>
+                        <p style="margin-bottom: 12px;"><strong> Sequence Numbers:</strong> Each packet is numbered (0, 1, 0, 1...) to distinguish between new packets and retransmissions.</p>
+                        <p style="margin-bottom: 12px;"><strong> Reliability:</strong> The protocol guarantees delivery by retransmitting until acknowledgment is received.</p>
+                        <p><strong> Efficiency Trade-off:</strong> While reliable, the protocol sacrifices speed for guaranteed delivery.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Simulation Page -->
+    <div id="simulationPage" class="hidden" style="min-height: 100vh; padding: 16px 16px 32px;">
+        <div style="max-width: 112rem; margin: 0 auto;">
+            <!-- Header -->
+            <div class="glass rounded-2xl p-6 mb-6">
+                <button id="backToTheory" style="color: rgba(255,255,255,0.8); margin-bottom: 16px; cursor: pointer; background: none; border: none; font-size: 16px;">
+                    ← Back to Home
+                </button>
+                <h2 style="font-size: 2rem; font-weight: bold; color: white; text-align: center;"> Interactive ARQ Simulation</h2>
+            </div>
+
+            <div style="display: grid; grid-template-columns: 1fr; gap: 24px;">
+                <div style="display: grid; grid-template-columns: 320px 1fr; gap: 24px;">
+                    <!-- Control Panel -->
+                    <div class="glass rounded-2xl p-6">
+                        <h3 style="font-size: 1.25rem; font-weight: bold; color: white; margin-bottom: 16px;"> Control Panel</h3>
+                        
+                        <div style="margin-bottom: 24px;">
+                            <label style="display: flex; align-items: center; justify-content: space-between; color: white; margin-bottom: 8px;">
+                                <span>Noisy Channel</span>
+                                <input type="checkbox" id="noiseToggle" style="width: 48px; height: 24px;" checked>
+                            </label>
+                            <p style="color: rgba(255,255,255,0.6); font-size: 0.875rem;">Simulate network interference</p>
+                        </div>
+
+                        <div style="margin-bottom: 24px;">
+                            <label style="color: white; margin-bottom: 8px; display: block;">
+                                Packet Loss Probability: <span id="lossValue">30</span>%
+                            </label>
+                            <input type="range" id="lossSlider" min="0" max="80" value="30" style="width: 100%;">
+                        </div>
+
+                        <button id="sendOrderBtn" class="btn-primary" style="width: 100%; color: white; padding: 12px 24px; border-radius: 8px; font-weight: 600; margin-bottom: 16px; border: none; cursor: pointer; font-size: 16px;">
+                             Send Order
+                        </button>
+
+                        <button id="resetBtn" style="width: 100%; color: white; padding: 12px 24px; border-radius: 8px; font-weight: 600; background: rgba(239, 68, 68, 0.8); border: none; cursor: pointer; font-size: 16px;">
+                             Reset Simulation
+                        </button>
+
+                        <!-- Metrics -->
+                        <div style="margin-top: 24px;">
+                            <div class="glass rounded-lg p-3 mb-3">
+                                <div style="color: rgba(255,255,255,0.7); font-size: 0.875rem;"> Successful Deliveries</div>
+                                <div style="font-size: 2rem; font-weight: bold; color: #4ade80;" id="successCount">0</div>
+                            </div>
+                            <div class="glass rounded-lg p-3 mb-3">
+                                <div style="color: rgba(255,255,255,0.7); font-size: 0.875rem;"> Lost Frames</div>
+                                <div style="font-size: 2rem; font-weight: bold; color: #f87171;" id="lostCount">0</div>
+                            </div>
+                            <div class="glass rounded-lg p-3 mb-3">
+                                <div style="color: rgba(255,255,255,0.7); font-size: 0.875rem;"> Retransmissions</div>
+                                <div style="font-size: 2rem; font-weight: bold; color: #facc15;" id="retryCount">0</div>
+                            </div>
+                            <div class="glass rounded-lg p-3">
+                                <div style="color: rgba(255,255,255,0.7); font-size: 0.875rem;"> Avg Delivery Time</div>
+                                <div style="font-size: 2rem; font-weight: bold; color: #60a5fa;" id="avgTime">0.0s</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Simulation Canvas -->
+                    <div class="glass rounded-2xl p-8" style="min-height: 600px; display: flex; flex-direction: column;">
+                        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 32px;">
+                            <!-- Sender -->
+                            <div style="text-align: center;">
+                                <div style="font-size: 4rem; margin-bottom: 8px;"></div>
+                                <div style="color: white; font-weight: 600;">Customer</div>
+                                <div style="color: rgba(255,255,255,0.6); font-size: 0.875rem;">(Sender)</div>
+                            </div>
+
+                            <!-- Noise Zone -->
+                            <div style="flex: 1; margin: 0 32px;">
+                                <div id="noiseZone" class="noise-zone rounded-lg p-4" style="height: 150px; position: relative;">
+                                    <div style="text-align: center; color: rgba(255,255,255,0.5); font-size: 0.875rem; margin-bottom: 8px;">
+                                         Network Channel
+                                    </div>
+                                    <div id="animationPath" class="animation-container">
+                                        <!-- Packets will animate here -->
+                                    </div>
+                                    <div id="timeoutBarContainer" class="hidden" style="margin-top: 8px;">
+                                        <div style="color: rgba(255,255,255,0.5); font-size: 0.75rem; margin-bottom: 4px;">
+                                             Timeout Timer
+                                        </div>
+                                        <div style="background: rgba(255,255,255,0.2); border-radius: 9999px; overflow: hidden;">
+                                            <div id="timeoutBar" class="timeout-bar"></div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Receiver -->
+                            <div style="text-align: center;">
+                                <div style="font-size: 4rem; margin-bottom: 8px;"></div>
+                                <div style="color: white; font-weight: 600;">Amazon Server</div>
+                                <div style="color: rgba(255,255,255,0.6); font-size: 0.875rem;">(Receiver)</div>
+                            </div>
+                        </div>
+
+                        <!-- Status Message -->
+                        <div id="statusMessage" class="glass rounded-lg p-4 text-center" style="color: white; margin-bottom: 16px;">
+                            <span style="font-size: 1.125rem;"> Ready to send order. Click "Send Order" button.</span>
+                        </div>
+
+                        <!-- History Log -->
+                        <div class="glass rounded-lg p-5" style="flex: 1; overflow-y: auto; min-height: 300px;">
+                            <h4 style="color: white; font-weight: 700; margin-bottom: 12px; font-size: 1.125rem; display: flex; align-items: center; gap: 8px;">
+                                <span></span>
+                                <span>Transmission Log</span>
+                            </h4>
+                            <div id="logContainer" style="font-size: 0.875rem;">
+                                <div style="color: rgba(255,255,255,0.5);">No transmissions yet...</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Conclusion Section -->
+            <div class="glass rounded-2xl p-8 mt-6">
+                <h3 style="font-size: 1.875rem; font-weight: bold; color: white; margin-bottom: 16px;">
+                     Conclusion: Stop & Wait ARQ
+                </h3>
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 24px; color: rgba(255,255,255,0.8);">
+                    <div>
+                        <h4 style="font-weight: 600; color: white; margin-bottom: 8px;"> Advantages:</h4>
+                        <ul style="list-style: disc; padding-left: 24px; line-height: 1.8;">
+                            <li>Simple implementation and easy to understand</li>
+                            <li>Guaranteed reliable data delivery</li>
+                            <li>Low memory requirements (only one frame buffered)</li>
+                            <li>Excellent error detection and correction</li>
+                        </ul>
+                    </div>
+                    <div>
+                        <h4 style="font-weight: 600; color: white; margin-bottom: 8px;"> Limitations:</h4>
+                        <ul style="list-style: disc; padding-left: 24px; line-height: 1.8;">
+                            <li>Low throughput and inefficient bandwidth usage</li>
+                            <li>Significant idle time while waiting for ACK</li>
+                            <li>Not suitable for high-speed, long-distance networks</li>
+                            <li>Performance degrades with increased propagation delay</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Footer -->
+    <footer style="text-align: center; color: rgba(255,255,255,0.6); padding: 24px;">
+        <p>© 2025 PacketQuest | Stop And Wait Protocol Simulation</p>
+    </footer>
+
+    <script>
+        // State Management
+        var state = {
+            isDark: false,
+            isNoisy: true,
+            lossProbability: 30,
+            isTransmitting: false,
+            stats: {
+                success: 0,
+                lost: 0,
+                retries: 0,
+                totalTime: 0
+            },
+            currentPacketId: 0,
+            nextPacketId: 1
+        };
+
+        // DOM Elements
+        var els = {
+            landingPage: document.getElementById('landingPage'),
+            theoryPage: document.getElementById('theoryPage'),
+            simulationPage: document.getElementById('simulationPage'),
+            theoryBtn: document.getElementById('theoryBtn'),
+            startBtn: document.getElementById('startBtn'),
+            backToLanding: document.getElementById('backToLanding'),
+            backToTheory: document.getElementById('backToTheory'),
+            darkModeToggle: document.getElementById('darkModeToggle'),
+            noiseToggle: document.getElementById('noiseToggle'),
+            lossSlider: document.getElementById('lossSlider'),
+            lossValue: document.getElementById('lossValue'),
+            sendOrderBtn: document.getElementById('sendOrderBtn'),
+            resetBtn: document.getElementById('resetBtn'),
+            animationPath: document.getElementById('animationPath'),
+            statusMessage: document.getElementById('statusMessage'),
+            logContainer: document.getElementById('logContainer'),
+            timeoutBar: document.getElementById('timeoutBar'),
+            timeoutBarContainer: document.getElementById('timeoutBarContainer'),
+            successCount: document.getElementById('successCount'),
+            lostCount: document.getElementById('lostCount'),
+            retryCount: document.getElementById('retryCount'),
+            avgTime: document.getElementById('avgTime')
+        };
+
+        // Navigation
+        els.theoryBtn.addEventListener('click', function() {
+            els.landingPage.style.display = 'none';
+            els.theoryPage.style.display = 'block';
+            els.theoryPage.classList.remove('hidden');
+            window.scrollTo(0, 0);
+        });
+
+        els.startBtn.addEventListener('click', function() {
+            els.landingPage.style.display = 'none';
+            els.simulationPage.style.display = 'block';
+            els.simulationPage.classList.remove('hidden');
+            window.scrollTo(0, 0);
+        });
+
+        els.backToLanding.addEventListener('click', function() {
+            els.theoryPage.style.display = 'none';
+            els.landingPage.style.display = 'flex';
+            els.theoryPage.classList.add('hidden');
+            window.scrollTo(0, 0);
+        });
+
+        els.backToTheory.addEventListener('click', function() {
+            els.simulationPage.style.display = 'none';
+            els.landingPage.style.display = 'flex';
+            els.simulationPage.classList.add('hidden');
+            window.scrollTo(0, 0);
+        });
+
+        // Dark Mode Toggle
+        els.darkModeToggle.addEventListener('click', function() {
+            state.isDark = !state.isDark;
+            if (state.isDark) {
+                document.body.classList.remove('light');
+                document.body.classList.add('dark');
+                els.darkModeToggle.textContent = '☀️ Light Mode';
+            } else {
+                document.body.classList.remove('dark');
+                document.body.classList.add('light');
+                els.darkModeToggle.textContent = '🌙 Dark Mode';
+            }
+        });
+
+        // Control Panel
+        els.noiseToggle.addEventListener('change', function(e) {
+            state.isNoisy = e.target.checked;
+        });
+
+        els.lossSlider.addEventListener('input', function(e) {
+            state.lossProbability = parseInt(e.target.value);
+            els.lossValue.textContent = state.lossProbability;
+        });
+
+        // Utility Functions
+        function addLog(message, type) {
+            type = type || 'info';
+            var colors = {
+                success: 'color: #4ade80;',
+                error: 'color: #f87171;',
+                warning: 'color: #facc15;',
+                info: 'color: #60a5fa;'
+            };
+            
+            if (els.logContainer.children[0] && els.logContainer.children[0].textContent.includes('No transmissions')) {
+                els.logContainer.innerHTML = '';
+            }
+
+            var entry = document.createElement('div');
+            entry.className = 'log-entry';
+            entry.style.cssText = colors[type] + ' padding: 8px; background: rgba(255,255,255,0.1); border-radius: 8px; margin-bottom: 8px;';
+            var timestamp = new Date().toLocaleTimeString();
+            entry.textContent = '[' + timestamp + '] ' + message;
+            els.logContainer.insertBefore(entry, els.logContainer.firstChild);
+        }
+
+        function updateStats() {
+            els.successCount.textContent = state.stats.success;
+            els.lostCount.textContent = state.stats.lost;
+            els.retryCount.textContent = state.stats.retries;
+            var avg = state.stats.success > 0 ? (state.stats.totalTime / state.stats.success).toFixed(1) : '0.0';
+            els.avgTime.textContent = avg + 's';
+        }
+
+        function updateStatus(message, icon) {
+            icon = icon || '📡';
+            els.statusMessage.innerHTML = '<span style="font-size: 1.125rem;">' + icon + ' ' + message + '</span>';
+        }
+
+        function shouldPacketFail() {
+            return state.isNoisy && Math.random() * 100 < state.lossProbability;
+        }
+
+        function showTimeoutBar(duration) {
+            els.timeoutBarContainer.classList.remove('hidden');
+            els.timeoutBar.style.transition = 'width ' + duration + 'ms linear';
+            els.timeoutBar.style.width = '0%';
+            
+            setTimeout(function() {
+                els.timeoutBar.style.width = '100%';
+            }, 50);
+
+            setTimeout(function() {
+                els.timeoutBarContainer.classList.add('hidden');
+                els.timeoutBar.style.width = '0%';
+            }, duration + 100);
+        }
+
+        function sleep(ms) {
+            return new Promise(function(resolve) {
+                setTimeout(resolve, ms);
+            });
+        }
+
+        async function animatePacket(isRetransmit) {
+            isRetransmit = isRetransmit || false;
+            var startTime = Date.now();
+            
+            // Use current packet ID for transmission (don't increment on retransmit)
+            if (!isRetransmit) {
+                state.currentPacketId = state.nextPacketId;
+            }
+            var packetId = state.currentPacketId;
+
+            // Create packet element
+            var packet = document.createElement('div');
+            packet.className = 'packet';
+            packet.innerHTML = '📦<div class="packet-id">ORDER #' + packetId + '</div>';
+            els.animationPath.appendChild(packet);
+
+            if (isRetransmit) {
+                addLog('🔁 Retransmitting Order #' + packetId + '...', 'warning');
+                state.stats.retries++;
+                updateStats();
+            } else {
+                addLog('📤 Sending Order Request #' + packetId + '...', 'info');
+            }
+            updateStatus('Transmitting order packet...', '📤');
+
+            // Animate packet forward to the END of the channel
+            await sleep(100);
+            var containerWidth = els.animationPath.offsetWidth;
+            packet.style.left = (containerWidth - 90) + 'px'; // Move to end (width - packet width)
+            
+            await sleep(1000);
+
+            // Check if packet is lost
+            if (shouldPacketFail()) {
+                packet.classList.add('fade-out');
+                updateStatus('❌ Packet Lost! Retransmitting...', '❌');
+                addLog('❌ Order #' + packetId + ' lost in transmission!', 'error');
+                state.stats.lost++;
+                updateStats();
+                
+                await sleep(500);
+                packet.remove();
+
+                // Show timeout and retry with SAME packet ID
+                showTimeoutBar(2000);
+                await sleep(2000);
+                
+                return await animatePacket(true); // Retransmit with same ID
+            }
+
+            // Packet received successfully
+            updateStatus('✅ Packet received! Sending ACK...', '✅');
+            addLog('✅ Order #' + packetId + ' received by server', 'success');
+
+            await sleep(500);
+
+            // Check if ACK is lost
+            if (shouldPacketFail()) {
+                packet.remove();
+                updateStatus('❌ ACK Lost! Retransmitting...', '❌');
+                addLog('❌ Confirmation for Order #' + packetId + ' lost!', 'error');
+                state.stats.lost++;
+                updateStats();
+
+                showTimeoutBar(2000);
+                await sleep(2000);
+                
+                return await animatePacket(true); // Retransmit with same ID
+            }
+
+            // Create ACK packet
+            var ack = document.createElement('div');
+            ack.className = 'packet ack-packet';
+            ack.innerHTML = '✅<div class="packet-id">ACK #' + packetId + '</div>';
+            ack.style.left = (containerWidth - 70) + 'px'; // Start from end
+            els.animationPath.appendChild(ack);
+
+            packet.remove();
+
+            // Animate ACK back to start
+            await sleep(100);
+            ack.style.left = '0px';
+            
+            await sleep(1000);
+
+            ack.remove();
+            
+            var elapsedTime = (Date.now() - startTime) / 1000;
+            state.stats.success++;
+            state.stats.totalTime += elapsedTime;
+            updateStats();
+
+            updateStatus('🎉 Order #' + packetId + ' confirmed successfully!', '🎉');
+            addLog('🎉 Order #' + packetId + ' completed in ' + elapsedTime.toFixed(1) + 's', 'success');
+
+            // Increment packet ID only after successful transmission
+            state.nextPacketId++;
+            
+            await sleep(500);
+        }
+
+        // Send Order Button
+        els.sendOrderBtn.addEventListener('click', async function() {
+            if (state.isTransmitting) return;
+            
+            state.isTransmitting = true;
+            els.sendOrderBtn.disabled = true;
+            els.sendOrderBtn.textContent = '⏳ Transmitting...';
+            
+            await animatePacket();
+            
+            state.isTransmitting = false;
+            els.sendOrderBtn.disabled = false;
+            els.sendOrderBtn.textContent = '📦 Send Order';
+            updateStatus('Ready to send next order.', '⏸️');
+        });
+
+        // Reset Button
+        els.resetBtn.addEventListener('click', function() {
+            state.stats = { success: 0, lost: 0, retries: 0, totalTime: 0 };
+            state.currentPacketId = 0;
+            state.nextPacketId = 1;
+            updateStats();
+            els.logContainer.innerHTML = '<div style="color: rgba(255,255,255,0.5);">No transmissions yet...</div>';
+            updateStatus('Ready to send order. Click "Send Order" button.', '⏸️');
+            els.animationPath.innerHTML = '';
+        });
+
+        // Initialize
+        updateStats();
+    </script>
+</body>
+</html>
